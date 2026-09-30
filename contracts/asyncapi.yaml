@@ -1,0 +1,66 @@
+asyncapi: 3.0.0
+info:
+  title: Bidding Engine events
+  version: 1.0.0
+  description: Topic names follow <domain>.<version>.<event>.
+channels:
+  bidPlaced:
+    address: auctions.v1.bid-placed
+    description: >
+      One message per accepted bid, keyed by auction_id. Delivery is
+      at-least-once and may be out of decision order; order by sequence and
+      deduplicate on (auction_id, bid_id).
+    messages:
+      bidPlaced:
+        $ref: '#/components/messages/BidPlaced'
+  bidPlacedDeadLetter:
+    address: auctions.v1.bid-placed-dlq
+    description: >
+      Messages the recorder rejected permanently. Same key and payload as the
+      source record, plus headers x-error, x-source-topic, x-source-partition
+      and x-source-offset.
+    messages:
+      bidPlaced:
+        $ref: '#/components/messages/BidPlaced'
+operations:
+  publishBidPlaced:
+    action: send
+    channel:
+      $ref: '#/channels/bidPlaced'
+  recordBidPlaced:
+    action: receive
+    channel:
+      $ref: '#/channels/bidPlaced'
+components:
+  messages:
+    BidPlaced:
+      contentType: application/json
+      payload:
+        type: object
+        required: [bid_id, auction_id, bidder_id, amount_satang, sequence, placed_at, auction_ends_at, extended]
+        properties:
+          bid_id:
+            type: string
+            description: The bid's idempotency key.
+          auction_id:
+            type: string
+          bidder_id:
+            type: string
+          amount_satang:
+            type: integer
+            format: int64
+            minimum: 1
+          sequence:
+            type: integer
+            format: int64
+            minimum: 1
+            description: Gapless 1-based position of the bid within its auction.
+          placed_at:
+            type: string
+            format: date-time
+          auction_ends_at:
+            type: string
+            format: date-time
+            description: Auction end after this bid, including any anti-sniping extension.
+          extended:
+            type: boolean

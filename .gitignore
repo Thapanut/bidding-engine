@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+tmp/*
+!tmp/.gitkeep
+bin/
+coverage.out
+node_modules/
+.DS_Store
+.claude/settings.local.json

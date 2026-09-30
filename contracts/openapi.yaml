@@ -1,0 +1,213 @@
+openapi: 3.0.3
+info:
+  title: Bidding Engine API
+  version: 1.0.0
+  description: All money is an integer number of satang (1 THB = 100 satang).
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      responses:
+        '204':
+          description: Alive
+  /v1/auctions:
+    post:
+      summary: Create and open an auction
+      description: Idempotent per auction_id; repeating an ID returns the existing auction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAuction'
+      responses:
+        '201':
+          description: Auction opened
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Auction'
+        '400':
+          $ref: '#/components/responses/Error'
+  /v1/auctions/{id}:
+    get:
+      summary: Auction status
+      parameters:
+        - $ref: '#/components/parameters/AuctionID'
+      responses:
+        '200':
+          description: Current state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Auction'
+        '404':
+          $ref: '#/components/responses/Error'
+  /v1/auctions/{id}/bids:
+    post:
+      summary: Place a bid
+      parameters:
+        - $ref: '#/components/parameters/AuctionID'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >
+            Identifies the bid across retries; becomes bid_id. Generated when
+            absent and echoed on every response.
+          schema:
+            $ref: '#/components/schemas/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceBid'
+      responses:
+        '201':
+          description: Bid accepted and durable. A replay returns the original bid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bid'
+        '400':
+          description: validation_failed
+          $ref: '#/components/responses/Error'
+        '403':
+          description: self_bidding
+          $ref: '#/components/responses/Error'
+        '404':
+          description: auction_not_found
+          $ref: '#/components/responses/Error'
+        '409':
+          description: auction_not_active or already_highest_bidder
+          $ref: '#/components/responses/Error'
+        '422':
+          description: bid_too_low (with min_required_satang) or idempotency_key_reused
+          $ref: '#/components/responses/Error'
+        '503':
+          description: >
+            bid_not_durable. The bid was accepted but not yet persisted; retry
+            with the same Idempotency-Key.
+          $ref: '#/components/responses/Error'
+components:
+  parameters:
+    AuctionID:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ID'
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code:
+                    type: string
+                    enum: [validation_failed, auction_not_found, auction_not_active, self_bidding, already_highest_bidder, bid_too_low, idempotency_key_reused, bid_not_durable, request_error, internal_error]
+                  message:
+                    type: string
+                  min_required_satang:
+                    $ref: '#/components/schemas/Satang'
+  schemas:
+    ID:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{1,64}$'
+    Satang:
+      type: integer
+      format: int64
+      minimum: 1
+      maximum: 4503599627370496
+    CreateAuction:
+      type: object
+      additionalProperties: false
+      required: [seller_id, start_price_satang, min_increment_satang, starts_at, ends_at]
+      properties:
+        auction_id:
+          $ref: '#/components/schemas/ID'
+        seller_id:
+          $ref: '#/components/schemas/ID'
+        start_price_satang:
+          $ref: '#/components/schemas/Satang'
+        min_increment_satang:
+          $ref: '#/components/schemas/Satang'
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+    PlaceBid:
+      type: object
+      additionalProperties: false
+      required: [bidder_id, amount_satang]
+      properties:
+        bidder_id:
+          $ref: '#/components/schemas/ID'
+        amount_satang:
+          $ref: '#/components/schemas/Satang'
+    Auction:
+      type: object
+      properties:
+        auction_id:
+          type: string
+        seller_id:
+          type: string
+        status:
+          type: string
+          enum: [scheduled, active, ended]
+        start_price_satang:
+          type: integer
+          format: int64
+        min_increment_satang:
+          type: integer
+          format: int64
+        current_price_satang:
+          type: integer
+          format: int64
+        min_next_bid_satang:
+          type: integer
+          format: int64
+        highest_bidder_id:
+          type: string
+          description: Empty until the first bid.
+        bid_count:
+          type: integer
+          format: int64
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+    Bid:
+      type: object
+      properties:
+        bid_id:
+          type: string
+        auction_id:
+          type: string
+        bidder_id:
+          type: string
+        amount_satang:
+          type: integer
+          format: int64
+        sequence:
+          type: integer
+          format: int64
+        placed_at:
+          type: string
+          format: date-time
+        auction_ends_at:
+          type: string
+          format: date-time
+        extended:
+          type: boolean
