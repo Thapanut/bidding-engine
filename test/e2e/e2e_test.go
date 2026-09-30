@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Thapanut/bidding-engine/internal/adapter/inbound/httpapi"
@@ -37,7 +36,7 @@ const (
 )
 
 type engine struct {
-	app  *fiber.App
+	app  *httpapi.Server
 	repo *memory.Repository
 }
 
@@ -71,11 +70,11 @@ func startEngine(t *testing.T) engine {
 		consumer.Close()
 	})
 
-	ids := system.UUIDGenerator{}
+	ids, clock := system.UUIDGenerator{}, system.Clock{}
 	bidding := service.NewBidding(
 		redisdecision.NewStore(redisClient, redisdecision.DefaultRetention),
-		publisher, repo, system.Clock{}, ids)
-	return engine{app: httpapi.New(bidding, ids, log), repo: repo}
+		publisher, repo, clock, ids)
+	return engine{app: httpapi.New(bidding, ids, clock, log), repo: repo}
 }
 
 func (e engine) call(method, path string, body any, headers map[string]string, out any) (int, error) {

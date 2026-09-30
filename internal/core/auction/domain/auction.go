@@ -3,7 +3,10 @@
 package domain
 
 import (
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Thapanut/bidding-engine/internal/kernel"
 )
@@ -14,11 +17,16 @@ const (
 	// AntiSnipingExtension is how far past the sniping bid the new end is set.
 	AntiSnipingExtension = 2 * time.Minute
 
+	// RecentBidsKept is how many of the latest accepted bids the decision
+	// layer keeps readable for live views.
+	RecentBidsKept = 50
+
 	// TimePrecision is the resolution of every timestamp in the engine.
 	// The Redis decision layer works in whole milliseconds.
 	TimePrecision = time.Millisecond
 
-	maxIDLength = 64
+	maxIDLength    = 64
+	maxTitleLength = 120
 )
 
 // Status is the lifecycle state of an auction at a given instant.
@@ -34,6 +42,7 @@ const (
 // Auction is the aggregate the bidding rules are evaluated against.
 type Auction struct {
 	ID              string
+	Title           string
 	SellerID        string
 	StartPrice      kernel.Money
 	MinIncrement    kernel.Money
@@ -74,6 +83,22 @@ func NewAuction(id, sellerID string, startPrice, minIncrement kernel.Money, star
 		StartsAt:     startsAt,
 		EndsAt:       endsAt,
 	}, nil
+}
+
+// WithTitle returns the auction with a display title. The title is optional
+// free text and plays no part in the bidding rules.
+func (a Auction) WithTitle(title string) (Auction, error) {
+	title = strings.TrimSpace(title)
+	if utf8.RuneCountInString(title) > maxTitleLength {
+		return Auction{}, invalid("title must be at most %d characters", maxTitleLength)
+	}
+	for _, r := range title {
+		if unicode.IsControl(r) {
+			return Auction{}, invalid("title must not contain control characters")
+		}
+	}
+	a.Title = title
+	return a, nil
 }
 
 // StatusAt reports the lifecycle state at now.

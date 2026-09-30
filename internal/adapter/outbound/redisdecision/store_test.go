@@ -83,7 +83,7 @@ func TestLiveStateExpiresAfterRetention(t *testing.T) {
 			t.Fatalf("TTL of %s = %v, want auction end + retention", key, ttl)
 		}
 	}
-	if n := len(server.Keys()); n != 2 {
-		t.Fatalf("keys = %v, want the auction hash and the bid ledger", server.Keys())
+	if n := len(server.Keys()); n != 3 {
+		t.Fatalf("keys = %v, want the auction hash, the bid ledger and the recent list", server.Keys())
 	}
 }

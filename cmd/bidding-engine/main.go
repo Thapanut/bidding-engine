@@ -79,11 +79,11 @@ func run(log *slog.Logger) error {
 		}
 		defer publisher.Close()
 
-		ids := system.UUIDGenerator{}
+		ids, clock := system.UUIDGenerator{}, system.Clock{}
 		bidding := service.NewBidding(
 			redisdecision.NewStore(redisClient, redisdecision.DefaultRetention),
-			publisher, repo, system.Clock{}, ids)
-		app := httpapi.New(bidding, ids, log)
+			publisher, repo, clock, ids)
+		app := httpapi.New(bidding, ids, clock, log)
 
 		wg.Add(2)
 		go func() {

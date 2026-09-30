@@ -19,6 +19,9 @@ type DecisionStore interface {
 	PlaceBid(ctx context.Context, attempt domain.BidAttempt) (domain.Bid, error)
 	// GetAuction returns the live state or domain.ErrAuctionNotFound.
 	GetAuction(ctx context.Context, auctionID string) (domain.Auction, error)
+	// RecentBids returns the latest accepted bids, newest first, up to
+	// domain.RecentBidsKept. An unknown auction yields an empty list.
+	RecentBids(ctx context.Context, auctionID string) ([]domain.Bid, error)
 }
 
 // BidEventPublisher hands accepted bids to the durable slow path.
@@ -35,6 +38,10 @@ type AuctionRepository interface {
 	ApplyBid(ctx context.Context, bid domain.Bid) error
 	// GetAuction returns the durable state or domain.ErrAuctionNotFound.
 	GetAuction(ctx context.Context, auctionID string) (domain.Auction, error)
+	// ListAuctions returns up to limit auctions, most recently created first.
+	ListAuctions(ctx context.Context, limit int) ([]domain.Auction, error)
+	// ListBids returns up to limit bids of an auction, highest sequence first.
+	ListBids(ctx context.Context, auctionID string, limit int) ([]domain.Bid, error)
 }
 
 // Clock supplies the current time.

@@ -10,7 +10,30 @@ paths:
       responses:
         '204':
           description: Alive
+  /:
+    get:
+      summary: Bid Arena demo page
+      responses:
+        '200':
+          description: HTML page
   /v1/auctions:
+    get:
+      summary: List the 100 most recently created auctions with live state
+      responses:
+        '200':
+          description: Auctions, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  auctions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Auction'
+                  server_time:
+                    type: string
+                    format: date-time
     post:
       summary: Create and open an auction
       description: Idempotent per auction_id; repeating an ID returns the existing auction.
@@ -43,7 +66,40 @@ paths:
                 $ref: '#/components/schemas/Auction'
         '404':
           $ref: '#/components/responses/Error'
+  /v1/auctions/{id}/events:
+    get:
+      summary: Live auction stream (server-sent events)
+      description: >
+        Each event's data is a LiveSnapshot. Sent on connect, on change (at most
+        every 100 ms) and at least every second.
+      parameters:
+        - $ref: '#/components/parameters/AuctionID'
+      responses:
+        '200':
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/LiveSnapshot'
+        '404':
+          $ref: '#/components/responses/Error'
   /v1/auctions/{id}/bids:
+    get:
+      summary: Latest 50 accepted bids, newest first
+      parameters:
+        - $ref: '#/components/parameters/AuctionID'
+      responses:
+        '200':
+          description: Recent bids; empty for an unknown auction
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bids:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Bid'
     post:
       summary: Place a bid
       parameters:
@@ -133,6 +189,9 @@ components:
       properties:
         auction_id:
           $ref: '#/components/schemas/ID'
+        title:
+          type: string
+          maxLength: 120
         seller_id:
           $ref: '#/components/schemas/ID'
         start_price_satang:
@@ -158,6 +217,8 @@ components:
       type: object
       properties:
         auction_id:
+          type: string
+        title:
           type: string
         seller_id:
           type: string
@@ -211,3 +272,16 @@ components:
           format: date-time
         extended:
           type: boolean
+    LiveSnapshot:
+      type: object
+      properties:
+        auction:
+          $ref: '#/components/schemas/Auction'
+        recent_bids:
+          type: array
+          maxItems: 12
+          items:
+            $ref: '#/components/schemas/Bid'
+        server_time:
+          type: string
+          format: date-time

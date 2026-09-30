@@ -4,11 +4,13 @@
 -- KEYS[1] auction hash
 -- ARGV[1] seller_id      ARGV[2] start_price   ARGV[3] min_increment
 -- ARGV[4] starts_at_ms   ARGV[5] ends_at_ms    ARGV[6] expire_at_ms
+-- ARGV[7] title
 if redis.call('EXISTS', KEYS[1]) == 1 then
   return 0
 end
 redis.call('HSET', KEYS[1],
   'seller_id', ARGV[1],
+  'title', ARGV[7],
   'start_price', ARGV[2],
   'min_increment', ARGV[3],
   'current_price', ARGV[2],

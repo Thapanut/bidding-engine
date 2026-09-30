@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"io"
@@ -44,6 +45,7 @@ const (
 
 type createAuctionRequest struct {
 	AuctionID          string    `json:"auction_id"`
+	Title              string    `json:"title"`
 	SellerID           string    `json:"seller_id"`
 	StartPriceSatang   int64     `json:"start_price_satang"`
 	MinIncrementSatang int64     `json:"min_increment_satang"`
@@ -58,6 +60,7 @@ type placeBidRequest struct {
 
 type auctionResponse struct {
 	AuctionID          string        `json:"auction_id"`
+	Title              string        `json:"title"`
 	SellerID           string        `json:"seller_id"`
 	Status             domain.Status `json:"status"`
 	StartPriceSatang   int64         `json:"start_price_satang"`
@@ -81,6 +84,16 @@ type bidResponse struct {
 	Extended      bool      `json:"extended"`
 }
 
+type auctionListResponse struct {
+	Auctions []auctionResponse `json:"auctions"`
+	// ServerTime lets clients run countdowns without trusting their own clock.
+	ServerTime time.Time `json:"server_time"`
+}
+
+type bidListResponse struct {
+	Bids []bidResponse `json:"bids"`
+}
+
 type errorBody struct {
 	Code              string `json:"code"`
 	Message           string `json:"message"`
@@ -91,26 +104,60 @@ type errorResponse struct {
 	Error errorBody `json:"error"`
 }
 
+//go:embed web/index.html
+var indexPage []byte
+
 type handler struct {
 	bidding port.Bidding
 	ids     port.IDGenerator
+	clock   port.Clock
+	live    *liveHub
 }
 
-// New builds the Fiber app serving the bidding API.
-func New(bidding port.Bidding, ids port.IDGenerator, log *slog.Logger) *fiber.App {
+// Server is the Fiber app serving the bidding API plus its live streams.
+type Server struct {
+	*fiber.App
+	live *liveHub
+}
+
+// Shutdown ends the live streams, then shuts the app down gracefully.
+func (s *Server) Shutdown() error {
+	s.live.close()
+	return s.App.Shutdown()
+}
+
+// ShutdownWithTimeout is Shutdown with a bound on the graceful wait. Open
+// event streams never finish on their own, so they are ended first.
+func (s *Server) ShutdownWithTimeout(timeout time.Duration) error {
+	s.live.close()
+	return s.App.ShutdownWithTimeout(timeout)
+}
+
+// New builds the server for the bidding API and the demo page.
+func New(bidding port.Bidding, ids port.IDGenerator, clock port.Clock, log *slog.Logger) *Server {
 	app := fiber.New(fiber.Config{
 		BodyLimit:             bodyLimitBytes,
 		DisableStartupMessage: true,
 		ErrorHandler:          errorHandler(log),
 	})
-	h := &handler{bidding: bidding, ids: ids}
+	h := &handler{bidding: bidding, ids: ids, clock: clock, live: newLiveHub(bidding, clock, log)}
+
+	// The demo bidding page; it talks to the same-origin API below.
+	app.Get("/", func(c *fiber.Ctx) error {
+		c.Set(fiber.HeaderContentType, fiber.MIMETextHTMLCharsetUTF8)
+		c.Set(fiber.HeaderCacheControl, "no-cache")
+		return c.Send(indexPage)
+	})
 
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) })
 	v1 := app.Group("/v1")
 	v1.Post("/auctions", h.createAuction)
+	v1.Get("/auctions", h.listAuctions)
+	v1.Get("/auctions/:id/bids", h.listBids)
+	v1.Get("/auctions/:id/events", h.streamAuction)
 	v1.Get("/auctions/:id", h.getAuction)
 	v1.Post("/auctions/:id/bids", h.placeBid)
-	return app
+	return &Server{App: app, live: h.live}
 }
 
 func (h *handler) createAuction(c *fiber.Ctx) error {
@@ -120,6 +167,7 @@ func (h *handler) createAuction(c *fiber.Ctx) error {
 	}
 	view, err := h.bidding.CreateAuction(c.UserContext(), port.CreateAuctionCommand{
 		AuctionID:    req.AuctionID,
+		Title:        req.Title,
 		SellerID:     req.SellerID,
 		StartPrice:   kernel.Money(req.StartPriceSatang),
 		MinIncrement: kernel.Money(req.MinIncrementSatang),
@@ -139,6 +187,30 @@ func (h *handler) getAuction(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(toAuctionResponse(view))
+}
+
+func (h *handler) listAuctions(c *fiber.Ctx) error {
+	views, err := h.bidding.ListAuctions(c.UserContext())
+	if err != nil {
+		return err
+	}
+	resp := auctionListResponse{Auctions: make([]auctionResponse, 0, len(views)), ServerTime: h.clock.Now().UTC()}
+	for _, view := range views {
+		resp.Auctions = append(resp.Auctions, toAuctionResponse(view))
+	}
+	return c.JSON(resp)
+}
+
+func (h *handler) listBids(c *fiber.Ctx) error {
+	bids, err := h.bidding.ListBids(c.UserContext(), strings.Clone(c.Params("id")))
+	if err != nil {
+		return err
+	}
+	resp := bidListResponse{Bids: make([]bidResponse, 0, len(bids))}
+	for _, bid := range bids {
+		resp.Bids = append(resp.Bids, toBidResponse(bid))
+	}
+	return c.JSON(resp)
 }
 
 func (h *handler) placeBid(c *fiber.Ctx) error {
@@ -162,7 +234,11 @@ func (h *handler) placeBid(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	return c.Status(fiber.StatusCreated).JSON(bidResponse{
+	return c.Status(fiber.StatusCreated).JSON(toBidResponse(bid))
+}
+
+func toBidResponse(bid domain.Bid) bidResponse {
+	return bidResponse{
 		BidID:         bid.ID,
 		AuctionID:     bid.AuctionID,
 		BidderID:      bid.BidderID,
@@ -171,13 +247,14 @@ func (h *handler) placeBid(c *fiber.Ctx) error {
 		PlacedAt:      bid.PlacedAt,
 		AuctionEndsAt: bid.AuctionEndsAt,
 		Extended:      bid.Extended,
-	})
+	}
 }
 
 func toAuctionResponse(view port.AuctionView) auctionResponse {
 	a := view.Auction
 	return auctionResponse{
 		AuctionID:          a.ID,
+		Title:              a.Title,
 		SellerID:           a.SellerID,
 		Status:             view.Status,
 		StartPriceSatang:   int64(a.StartPrice),
@@ -210,10 +287,10 @@ func decodeStrict(body []byte, dst any) error {
 func errorHandler(log *slog.Logger) fiber.ErrorHandler {
 	return func(c *fiber.Ctx, err error) error {
 		status, body := mapError(err)
-		switch status {
-		case fiber.StatusInternalServerError:
+		switch {
+		case status == fiber.StatusInternalServerError:
 			log.ErrorContext(c.UserContext(), "request failed", "method", c.Method(), "path", c.Path(), "error", err)
-		case fiber.StatusServiceUnavailable:
+		case errors.Is(err, domain.ErrBidNotDurable):
 			log.WarnContext(c.UserContext(), "bid accepted but not durable", "path", c.Path(), "error", err)
 			c.Set(fiber.HeaderRetryAfter, retryAfterSeconds)
 		}

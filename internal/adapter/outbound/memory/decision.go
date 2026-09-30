@@ -18,6 +18,7 @@ type DecisionStore struct {
 	mu       sync.Mutex
 	auctions map[string]domain.Auction
 	bids     map[string]map[string]domain.Bid // auction ID -> bid ID -> bid
+	recent   map[string][]domain.Bid          // auction ID -> latest bids, newest first
 }
 
 var _ port.DecisionStore = (*DecisionStore)(nil)
@@ -28,6 +29,7 @@ func NewDecisionStore(clock port.Clock) *DecisionStore {
 		clock:    clock,
 		auctions: make(map[string]domain.Auction),
 		bids:     make(map[string]map[string]domain.Bid),
+		recent:   make(map[string][]domain.Bid),
 	}
 }
 
@@ -65,6 +67,8 @@ func (s *DecisionStore) PlaceBid(_ context.Context, attempt domain.BidAttempt) (
 		s.bids[attempt.AuctionID] = make(map[string]domain.Bid)
 	}
 	s.bids[attempt.AuctionID][attempt.BidID] = bid
+	recent := append([]domain.Bid{bid}, s.recent[attempt.AuctionID]...)
+	s.recent[attempt.AuctionID] = recent[:min(len(recent), domain.RecentBidsKept)]
 	return bid, nil
 }
 
@@ -77,4 +81,11 @@ func (s *DecisionStore) GetAuction(_ context.Context, auctionID string) (domain.
 		return domain.Auction{}, domain.ErrAuctionNotFound
 	}
 	return auction, nil
+}
+
+// RecentBids implements port.DecisionStore.
+func (s *DecisionStore) RecentBids(_ context.Context, auctionID string) ([]domain.Bid, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]domain.Bid(nil), s.recent[auctionID]...), nil
 }

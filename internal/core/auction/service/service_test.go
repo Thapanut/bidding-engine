@@ -181,3 +181,97 @@ func TestRecordBid_PermanentFailures(t *testing.T) {
 }
 
 func domainAmount(step int) kernel.Money { return 10_000 + kernel.Money(step)*500 }
+
+func TestAC23_ListAuctionsOverlaysLiveStateNewestFirst(t *testing.T) {
+	f := newFixture()
+	ctx := context.Background()
+	f.openAuction(t, "auction-1")
+	f.openAuction(t, "auction-2")
+	// Accepted on the fast path but not yet recorded: the list must still show it.
+	if _, err := f.bidding.PlaceBid(ctx, port.PlaceBidCommand{AuctionID: "auction-1", BidderID: "bidder-1", IdempotencyKey: "bid-1", Amount: 10_000}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	archived, err := domain.NewAuction("archived", "seller-1", 10_000, 500, now.Add(-2*time.Hour), now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.CreateAuction(ctx, archived); err != nil {
+		t.Fatal(err)
+	}
+
+	views, err := f.bidding.ListAuctions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 3 || views[0].Auction.ID != "archived" || views[1].Auction.ID != "auction-2" || views[2].Auction.ID != "auction-1" {
+		t.Fatalf("views = %+v, want archived, auction-2, auction-1", views)
+	}
+	if views[0].Status != domain.StatusEnded {
+		t.Fatalf("archived status = %s, want ended", views[0].Status)
+	}
+	if live := views[2].Auction; live.BidSequence != 1 || live.HighestBidderID != "bidder-1" {
+		t.Fatalf("auction-1 = %+v, want live state with the unrecorded bid", live)
+	}
+}
+
+func TestAC23_ListBidsPrefersLiveFeedAndFallsBackToAudit(t *testing.T) {
+	f := newFixture()
+	ctx := context.Background()
+	f.openAuction(t, "auction-1")
+	first, err := f.bidding.PlaceBid(ctx, port.PlaceBidCommand{AuctionID: "auction-1", BidderID: "bidder-1", IdempotencyKey: "bid-1", Amount: 10_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.bidding.PlaceBid(ctx, port.PlaceBidCommand{AuctionID: "auction-1", BidderID: "bidder-2", IdempotencyKey: "bid-2", Amount: 10_500})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	live, err := f.bidding.ListBids(ctx, "auction-1")
+	if err != nil || len(live) != 2 || live[0] != second || live[1] != first {
+		t.Fatalf("live bids = %+v (%v), want newest first from the decision store", live, err)
+	}
+
+	// An auction whose live state is gone is served from the audit trail.
+	now := time.Now()
+	archived, err := domain.NewAuction("archived", "seller-1", 10_000, 500, now.Add(-2*time.Hour), now.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.CreateAuction(ctx, archived); err != nil {
+		t.Fatal(err)
+	}
+	old := domain.Bid{ID: "old-1", AuctionID: "archived", BidderID: "bidder-1", Amount: 10_000, Sequence: 1, PlacedAt: now, AuctionEndsAt: now}
+	if err := f.recorder.RecordBid(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	audited, err := f.bidding.ListBids(ctx, "archived")
+	if err != nil || len(audited) != 1 || audited[0].ID != "old-1" {
+		t.Fatalf("audited bids = %+v (%v), want the recorded bid", audited, err)
+	}
+	if _, err := f.bidding.ListBids(ctx, "bad id!"); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
+func TestCreateAuction_KeepsTitleAndRejectsInvalidOne(t *testing.T) {
+	f := newFixture()
+	ctx := context.Background()
+	now := time.Now()
+	cmd := port.CreateAuctionCommand{
+		AuctionID: "auction-1", Title: "Honda Civic 2020", SellerID: "seller-1", StartPrice: 10_000, MinIncrement: 500,
+		StartsAt: now.Add(-time.Hour), EndsAt: now.Add(time.Hour),
+	}
+	if _, err := f.bidding.CreateAuction(ctx, cmd); err != nil {
+		t.Fatal(err)
+	}
+	view, err := f.bidding.GetAuction(ctx, "auction-1")
+	if err != nil || view.Auction.Title != "Honda Civic 2020" {
+		t.Fatalf("title = %q (%v)", view.Auction.Title, err)
+	}
+	cmd.AuctionID, cmd.Title = "auction-2", "bad\ttitle"
+	if _, err := f.bidding.CreateAuction(ctx, cmd); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}

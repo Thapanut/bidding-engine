@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,5 +135,27 @@ func TestPlace_RejectionLeavesAuctionUnchanged(t *testing.T) {
 	unchanged, _, err := a.Place(attempt(t, "bid-1", "seller-1", 10_000), t0)
 	if !errors.Is(err, domain.ErrSelfBidding) || unchanged != a {
 		t.Fatalf("err = %v, auction changed = %v", err, unchanged != a)
+	}
+}
+
+func TestWithTitle(t *testing.T) {
+	a := newAuction(t)
+	titled, err := a.WithTitle("  Toyota Hilux Revo 2.4 ปี 2021  ")
+	if err != nil || titled.Title != "Toyota Hilux Revo 2.4 ปี 2021" {
+		t.Fatalf("title = %q, err = %v, want it trimmed", titled.Title, err)
+	}
+	if untitled, err := a.WithTitle(""); err != nil || untitled.Title != "" {
+		t.Fatalf("empty title must be allowed, got %q, %v", untitled.Title, err)
+	}
+	for name, title := range map[string]string{
+		"too long":          strings.Repeat("ก", 121),
+		"control character": "line one\nline two",
+	} {
+		if _, err := a.WithTitle(title); !errors.Is(err, domain.ErrValidation) {
+			t.Errorf("%s: err = %v, want ErrValidation", name, err)
+		}
+	}
+	if _, err := a.WithTitle(strings.Repeat("ก", 120)); err != nil {
+		t.Fatalf("120 Thai characters must fit: %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"sync"
 
@@ -14,6 +15,7 @@ import (
 type Repository struct {
 	mu       sync.Mutex
 	auctions map[string]domain.Auction
+	created  []string                         // auction IDs in creation order
 	bids     map[string]map[string]domain.Bid // auction ID -> bid ID -> bid
 }
 
@@ -35,6 +37,7 @@ func (r *Repository) CreateAuction(_ context.Context, auction domain.Auction) er
 		return domain.ErrAuctionExists
 	}
 	r.auctions[auction.ID] = auction
+	r.created = append(r.created, auction.ID)
 	r.bids[auction.ID] = make(map[string]domain.Bid)
 	return nil
 }
@@ -74,6 +77,24 @@ func (r *Repository) GetAuction(_ context.Context, auctionID string) (domain.Auc
 		return domain.Auction{}, domain.ErrAuctionNotFound
 	}
 	return auction, nil
+}
+
+// ListAuctions implements port.AuctionRepository.
+func (r *Repository) ListAuctions(_ context.Context, limit int) ([]domain.Auction, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	auctions := make([]domain.Auction, 0, min(limit, len(r.created)))
+	for i := len(r.created) - 1; i >= 0 && len(auctions) < limit; i-- {
+		auctions = append(auctions, r.auctions[r.created[i]])
+	}
+	return auctions, nil
+}
+
+// ListBids implements port.AuctionRepository.
+func (r *Repository) ListBids(_ context.Context, auctionID string, limit int) ([]domain.Bid, error) {
+	bids := r.Bids(auctionID)
+	slices.Reverse(bids)
+	return bids[:min(limit, len(bids))], nil
 }
 
 // Bids returns the audit trail of an auction ordered by sequence.

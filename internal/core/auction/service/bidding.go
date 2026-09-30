@@ -10,6 +10,9 @@ import (
 	"github.com/Thapanut/bidding-engine/internal/core/auction/port"
 )
 
+// maxListedAuctions is the page size of the auction catalogue.
+const maxListedAuctions = 100
+
 // Bidding implements port.Bidding: decide on the fast path, then hand the
 // accepted bid to the durable slow path.
 type Bidding struct {
@@ -36,6 +39,9 @@ func (s *Bidding) CreateAuction(ctx context.Context, cmd port.CreateAuctionComma
 	}
 	auction, err := domain.NewAuction(id, cmd.SellerID, cmd.StartPrice, cmd.MinIncrement, cmd.StartsAt, cmd.EndsAt)
 	if err != nil {
+		return port.AuctionView{}, err
+	}
+	if auction, err = auction.WithTitle(cmd.Title); err != nil {
 		return port.AuctionView{}, err
 	}
 
@@ -93,6 +99,47 @@ func (s *Bidding) GetAuction(ctx context.Context, auctionID string) (port.Auctio
 		return port.AuctionView{}, fmt.Errorf("get auction %s: %w", auctionID, err)
 	}
 	return s.view(auction), nil
+}
+
+// ListAuctions reads the catalogue from the system of record and overlays
+// live state for auctions the decision store still holds.
+func (s *Bidding) ListAuctions(ctx context.Context) ([]port.AuctionView, error) {
+	stored, err := s.repo.ListAuctions(ctx, maxListedAuctions)
+	if err != nil {
+		return nil, fmt.Errorf("list auctions: %w", err)
+	}
+	views := make([]port.AuctionView, 0, len(stored))
+	for _, auction := range stored {
+		live, err := s.decisions.GetAuction(ctx, auction.ID)
+		switch {
+		case err == nil:
+			auction = live
+		case !errors.Is(err, domain.ErrAuctionNotFound):
+			return nil, fmt.Errorf("list auctions: live state of %s: %w", auction.ID, err)
+		}
+		views = append(views, s.view(auction))
+	}
+	return views, nil
+}
+
+// ListBids returns the most recent accepted bids of an auction. The live
+// feed is preferred because the audit trail lags under load.
+func (s *Bidding) ListBids(ctx context.Context, auctionID string) ([]domain.Bid, error) {
+	if err := domain.ValidateAuctionID(auctionID); err != nil {
+		return nil, err
+	}
+	bids, err := s.decisions.RecentBids(ctx, auctionID)
+	if err != nil {
+		return nil, fmt.Errorf("recent bids of %s: %w", auctionID, err)
+	}
+	if len(bids) > 0 {
+		return bids, nil
+	}
+	bids, err = s.repo.ListBids(ctx, auctionID, domain.RecentBidsKept)
+	if err != nil {
+		return nil, fmt.Errorf("list bids of %s: %w", auctionID, err)
+	}
+	return bids, nil
 }
 
 func (s *Bidding) view(auction domain.Auction) port.AuctionView {

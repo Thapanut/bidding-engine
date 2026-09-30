@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bid Arena</title>
+<style>
+  :root {
+    --bg: #0b1020; --panel: #141b31; --panel-2: #1b2442; --line: #2a355c;
+    --text: #e9edf7; --muted: #8e9bc0; --accent: #ffb020; --accent-ink: #231600;
+    --good: #2fd08a; --bad: #ff5d6c; --info: #5aa9ff;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", "Noto Sans Thai", "Sarabun", sans-serif;
+  }
+  button, input, select { font: inherit; }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
+    padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .brand { font-size: 20px; font-weight: 800; letter-spacing: .3px; }
+  .brand span { color: var(--accent); }
+  .who { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.live { background: var(--good); box-shadow: 0 0 10px var(--good); }
+  .dot.down { background: var(--bad); }
+  input, select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; min-width: 0;
+  }
+  input:focus, select:focus, button:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+  main { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; padding: 16px 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+  .side { display: flex; flex-direction: column; gap: 16px; }
+
+  .lots { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow: auto; }
+  .lot {
+    text-align: left; width: 100%; background: var(--panel-2); color: inherit;
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer;
+  }
+  .lot:hover { border-color: var(--info); }
+  .lot.on { border-color: var(--accent); }
+  .lot b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lot small { color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+  .empty { color: var(--muted); padding: 8px 2px; }
+
+  form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  form label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  form .wide { grid-column: 1 / -1; }
+  .btn {
+    border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; cursor: pointer;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  }
+  .btn:hover { border-color: var(--info); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+  .arena-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .arena-head h1 { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
+  .badge { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+  .badge.active { background: rgba(47, 208, 138, .15); color: var(--good); }
+  .badge.ended { background: rgba(255, 93, 108, .15); color: var(--bad); }
+  .badge.scheduled { background: rgba(90, 169, 255, .15); color: var(--info); }
+  .lot-id { color: var(--muted); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+
+  .board { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 14px; margin-top: 14px; }
+  @media (max-width: 700px) { .board { grid-template-columns: minmax(0, 1fr); } }
+  .price-box, .clock-box { background: var(--panel-2); border-radius: 12px; padding: 16px; }
+  .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .price {
+    font-size: clamp(34px, 6vw, 60px); font-weight: 800; color: var(--accent); line-height: 1.1;
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+  }
+  .price.pop { animation: pop .25s ease-out; }
+  @keyframes pop { from { transform: scale(1.05); color: #fff; } to { transform: scale(1); } }
+  .leader { margin-top: 6px; overflow-wrap: anywhere; }
+  .leader b { color: var(--text); }
+  .leader.me b { color: var(--good); }
+  .clock { font-size: clamp(30px, 5vw, 48px); font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .clock.hot { color: var(--bad); }
+  .extended { visibility: hidden; color: var(--good); font-weight: 700; margin-top: 6px; }
+  .extended.show { visibility: visible; animation: fade 2.5s forwards; }
+  @keyframes fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+  .stat { background: var(--panel-2); border-radius: 12px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  canvas { width: 100%; height: 70px; display: block; margin-top: 10px; background: var(--panel-2); border-radius: 12px; }
+
+  .bidbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .bidbar .btn { flex: 1 1 130px; }
+  .bidbar .btn small { display: block; font-weight: 500; opacity: .8; }
+  .custom { display: flex; gap: 8px; margin-top: 8px; }
+  .custom input { flex: 1; }
+
+  .feed { list-style: none; margin: 8px 0 0; padding: 0; font-variant-numeric: tabular-nums; }
+  .feed li {
+    display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; align-items: baseline;
+    padding: 6px 4px; border-bottom: 1px solid var(--line);
+  }
+  .feed li:first-child { color: var(--accent); }
+  .feed li.me .name { color: var(--good); font-weight: 700; }
+  .feed .seq { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .feed .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed .tag { font-size: 11px; color: var(--good); margin-left: 6px; }
+
+  .bots { margin-top: 14px; }
+  code {
+    display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; font-family: var(--mono); font-size: 13px; overflow-x: auto; white-space: nowrap;
+  }
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100vw - 32px);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  #toast.show { opacity: 1; }
+  #toast.good { border-color: var(--good); }
+  #toast.bad { border-color: var(--bad); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Bid<span>Arena</span> · สนามประมูลสด</div>
+  <div class="who">
+    <span id="conn" class="dot" title="สถานะการเชื่อมต่อ"></span>
+    <label for="me">ชื่อผู้บิด</label>
+    <input id="me" maxlength="64" placeholder="เช่น somchai-01" autocomplete="off">
+  </div>
+</header>
+
+<main>
+  <div class="side">
+    <section class="panel">
+      <h2>รายการประมูล</h2>
+      <div id="lots" class="lots"><div class="empty">กำลังโหลด…</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>เปิดประมูลใหม่</h2>
+      <form id="create">
+        <label class="wide">ชื่อสินค้า
+          <input name="title" maxlength="120" placeholder="Toyota Hilux Revo 2.4 ปี 2021" required>
+        </label>
+        <label>ราคาเริ่มต้น (บาท)
+          <input name="start" inputmode="decimal" value="100000" required>
+        </label>
+        <label>ขั้นต่ำต่อบิด (บาท)
+          <input name="step" inputmode="decimal" value="1000" required>
+        </label>
+        <label class="wide">ระยะเวลา
+          <select name="minutes">
+            <option value="3">3 นาที</option>
+            <option value="10" selected>10 นาที</option>
+            <option value="60">1 ชั่วโมง</option>
+          </select>
+        </label>
+        <button class="btn primary wide" type="submit">เปิดประมูล</button>
+      </form>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div id="idle" class="empty">เลือกรายการประมูลทางซ้าย หรือเปิดประมูลใหม่</div>
+
+    <div id="arena" hidden>
+      <div class="arena-head">
+        <h1 id="title"></h1>
+        <span id="status" class="badge"></span>
+      </div>
+      <div id="lotId" class="lot-id"></div>
+
+      <div class="board">
+        <div class="price-box">
+          <div class="label">ราคาปัจจุบัน</div>
+          <div id="price" class="price"></div>
+          <div id="leader" class="leader"></div>
+        </div>
+        <div class="clock-box">
+          <div id="clockLabel" class="label">เหลือเวลา</div>
+          <div id="clock" class="clock"></div>
+          <div id="extended" class="extended">ต่อเวลา +2 นาที</div>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span class="label">จำนวนบิด</span><b id="count">0</b></div>
+        <div class="stat"><span class="label">บิดต่อวินาที</span><b id="rate">0</b></div>
+        <div class="stat"><span class="label">ขั้นต่ำถัดไป</span><b id="next"></b></div>
+      </div>
+      <canvas id="spark" height="70" aria-label="กราฟบิดต่อวินาที"></canvas>
+
+      <div class="bidbar" id="bidbar">
+        <button class="btn primary" data-steps="0">บิดขั้นต่ำ<small></small></button>
+        <button class="btn" data-steps="10">+10 ขั้น<small></small></button>
+        <button class="btn" data-steps="100">+100 ขั้น<small></small></button>
+        <button class="btn" data-steps="1000">+1,000 ขั้น<small></small></button>
+      </div>
+      <div class="custom">
+        <input id="amount" inputmode="decimal" placeholder="ใส่ราคาเอง (บาท)">
+        <button id="bidCustom" class="btn">บิดราคานี้</button>
+      </div>
+
+      <div class="bots">
+        <h2>ปล่อย bot 5,000 ตัวลงสนามนี้</h2>
+        <code id="botCmd"></code>
+        <p class="hint">รันใน terminal แล้วดูราคาวิ่งที่หน้านี้ กดบิดแทรกเข้าไปแข่งกับ bot ได้ ใช้ปุ่ม +100 หรือ +1,000 ขั้นถึงจะแซงทัน</p>
+      </div>
+
+      <h2 style="margin-top:16px">บิดล่าสุด</h2>
+      <ul id="feed" class="feed"></ul>
+    </div>
+  </section>
+</main>
+
+<div id="toast" role="status"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+  const BAHT_PATTERN = /^\d{1,13}(\.\d{1,2})?$/;
+  const HOUSE_SELLER = 'house';
+  const LIST_REFRESH_MS = 5000;
+  const RATE_WINDOW_MS = 1000;
+  const SPARK_POINTS = 120;
+  const SPARK_TICK_MS = 250;
+  const HOT_CLOCK_MS = 120000;
+
+  const STATUS_TEXT = { scheduled: 'ยังไม่เริ่ม', active: 'กำลังประมูล', ended: 'ปิดแล้ว' };
+  const ERROR_TEXT = {
+    auction_not_found: 'ไม่พบรายการประมูลนี้',
+    auction_not_active: 'รายการนี้ยังไม่เปิดหรือปิดไปแล้ว',
+    self_bidding: 'ผู้ขายบิดสินค้าของตัวเองไม่ได้',
+    already_highest_bidder: 'คุณเป็นผู้นำอยู่แล้ว',
+    idempotency_key_reused: 'คำขอซ้ำกับบิดก่อนหน้า',
+    bid_not_durable: 'ระบบบันทึกช้า ลองกดอีกครั้ง',
+    validation_failed: 'ข้อมูลไม่ถูกต้อง',
+  };
+
+  let current = null;       // latest auction snapshot
+  let selectedId = '';
+  let stream = null;
+  let clockOffset = 0;      // server time minus browser time
+  let samples = [];         // [browser ms, bid count] for the rate
+  let spark = [];
+  let lastEndsAt = '';
+
+  // Money is integer satang end to end; only formatting divides by 100.
+  function baht(satang) {
+    const whole = Math.floor(satang / 100).toLocaleString('th-TH');
+    const rest = satang % 100;
+    return '฿' + whole + (rest ? '.' + String(rest).padStart(2, '0') : '');
+  }
+  function parseBaht(text) {
+    const value = text.trim().replace(/,/g, '');
+    if (!BAHT_PATTERN.test(value)) return null;
+    const [whole, fraction = ''] = value.split('.');
+    return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  }
+
+  function toast(message, kind) {
+    const el = $('toast');
+    el.textContent = message;
+    el.className = 'show ' + (kind || '');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => { el.className = ''; }, 2600);
+  }
+
+  function remember(key, value) { try { localStorage.setItem(key, value); } catch (_) { /* private mode */ } }
+  function recall(key) { try { return localStorage.getItem(key) || ''; } catch (_) { return ''; } }
+
+  function myName() {
+    const name = $('me').value.trim();
+    if (!ID_PATTERN.test(name)) {
+      toast('ใส่ชื่อผู้บิดก่อน ใช้ได้เฉพาะ a-z, 0-9, - และ _', 'bad');
+      $('me').focus();
+      return '';
+    }
+    return name;
+  }
+
+  async function api(method, path, body, headers) {
+    const res = await fetch(path, {
+      method,
+      headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { /* empty body */ }
+    return { ok: res.ok, status: res.status, data };
+  }
+
+  function newKey() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'k-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
+  }
+
+  // ----- auction list -----
+  async function loadLots() {
+    let res;
+    try { res = await api('GET', '/v1/auctions'); } catch (_) { return; }
+    if (!res.ok) return;
+    const box = $('lots');
+    box.textContent = '';
+    const lots = res.data.auctions || [];
+    if (!lots.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'ยังไม่มีรายการ เปิดประมูลใหม่ด้านล่าง';
+      box.appendChild(empty);
+      return;
+    }
+    const order = { active: 0, scheduled: 1, ended: 2 };
+    lots.sort((a, b) => order[a.status] - order[b.status]);
+    for (const lot of lots) {
+      const button = document.createElement('button');
+      button.className = 'lot' + (lot.auction_id === selectedId ? ' on' : '');
+      const name = document.createElement('b');
+      name.textContent = lot.title || lot.auction_id;
+      const meta = document.createElement('small');
+      const price = document.createElement('span');
+      price.textContent = baht(lot.current_price_satang) + ' · ' + lot.bid_count.toLocaleString('th-TH') + ' บิด';
+      const state = document.createElement('span');
+      state.textContent = STATUS_TEXT[lot.status] || lot.status;
+      meta.append(price, state);
+      button.append(name, meta);
+      button.addEventListener('click', () => select(lot.auction_id));
+      box.appendChild(button);
+    }
+  }
+
+  // ----- live stream -----
+  function select(id) {
+    if (stream) stream.close();
+    selectedId = id;
+    current = null;
+    samples = [];
+    spark = [];
+    lastEndsAt = '';
+    location.hash = id;
+    $('idle').hidden = true;
+    $('arena').hidden = false;
+    $('botCmd').textContent = 'make loadtest-k6 AUCTION_ID=' + id;
+    $('conn').className = 'dot';
+
+    stream = new EventSource('/v1/auctions/' + encodeURIComponent(id) + '/events');
+    stream.onopen = () => { $('conn').className = 'dot live'; };
+    stream.onerror = () => { $('conn').className = 'dot down'; };  // EventSource reconnects by itself
+    stream.onmessage = (event) => render(JSON.parse(event.data));
+    loadLots();
+  }
+
+  function render(snapshot) {
+    const auction = snapshot.auction;
+    const previous = current;
+    current = auction;
+    const now = Date.now();
+    clockOffset = Date.parse(snapshot.server_time) - now;
+
+    $('title').textContent = auction.title || auction.auction_id;
+    $('lotId').textContent = auction.auction_id;
+    const status = $('status');
+    status.textContent = STATUS_TEXT[auction.status] || auction.status;
+    status.className = 'badge ' + auction.status;
+
+    const price = $('price');
+    price.textContent = baht(auction.current_price_satang);
+    if (previous && previous.current_price_satang !== auction.current_price_satang) {
+      price.classList.remove('pop');
+      void price.offsetWidth;
+      price.classList.add('pop');
+    }
+
+    const leader = $('leader');
+    const mine = auction.highest_bidder_id && auction.highest_bidder_id === $('me').value.trim();
+    leader.className = 'leader' + (mine ? ' me' : '');
+    leader.textContent = '';
+    if (auction.highest_bidder_id) {
+      leader.append(mine ? 'คุณกำลังนำ: ' : 'ผู้นำ: ');
+      const name = document.createElement('b');
+      name.textContent = auction.highest_bidder_id;
+      leader.appendChild(name);
+    } else {
+      leader.textContent = 'ยังไม่มีผู้บิด';
+    }
+
+    if (lastEndsAt && lastEndsAt !== auction.ends_at) {
+      const flag = $('extended');
+      flag.classList.remove('show');
+      void flag.offsetWidth;
+      flag.classList.add('show');
+    }
+    lastEndsAt = auction.ends_at;
+
+    $('count').textContent = auction.bid_count.toLocaleString('th-TH');
+    $('next').textContent = baht(auction.min_next_bid_satang);
+    samples.push([now, auction.bid_count]);
+    while (samples.length > 2 && now - samples[0][0] > RATE_WINDOW_MS * 3) samples.shift();
+
+    const open = auction.status === 'active';
+    for (const button of $('bidbar').querySelectorAll('button')) {
+      const steps = Number(button.dataset.steps);
+      button.disabled = !open;
+      button.querySelector('small').textContent =
+        baht(auction.min_next_bid_satang + steps * auction.min_increment_satang);
+    }
+    $('bidCustom').disabled = !open;
+
+    const feed = $('feed');
+    feed.textContent = '';
+    const me = $('me').value.trim();
+    for (const bid of snapshot.recent_bids || []) {
+      const row = document.createElement('li');
+      if (bid.bidder_id === me) row.className = 'me';
+      const seq = document.createElement('span');
+      seq.className = 'seq';
+      seq.textContent = '#' + bid.sequence;
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = bid.bidder_id;
+      if (bid.extended) {
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = 'ต่อเวลา';
+        name.appendChild(tag);
+      }
+      const amount = document.createElement('span');
+      amount.textContent = baht(bid.amount_satang);
+      row.append(seq, name, amount);
+      feed.appendChild(row);
+    }
+  }
+
+  // ----- clock, rate and sparkline -----
+  function tickClock() {
+    if (!current) return;
+    const now = Date.now() + clockOffset;
+    const clock = $('clock');
+    let target = Date.parse(current.ends_at);
+    let label = 'เหลือเวลา';
+    if (current.status === 'scheduled') { target = Date.parse(current.starts_at); label = 'เริ่มในอีก'; }
+    const left = Math.max(0, target - now);
+    if (current.status === 'ended' || (current.status === 'active' && left === 0)) {
+      $('clockLabel').textContent = 'ผลการประมูล';
+      clock.textContent = 'ปิดแล้ว';
+      clock.className = 'clock';
+      return;
+    }
+    const seconds = Math.floor(left / 1000);
+    const h = Math.floor(seconds / 3600);
+    const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+    const s = String(seconds % 60).padStart(2, '0');
+    const tenths = Math.floor((left % 1000) / 100);
+    $('clockLabel').textContent = label;
+    clock.textContent = (h ? h + ':' : '') + m + ':' + s + (left < HOT_CLOCK_MS ? '.' + tenths : '');
+    clock.className = 'clock' + (current.status === 'active' && left < HOT_CLOCK_MS ? ' hot' : '');
+  }
+
+  function currentRate() {
+    if (samples.length < 2) return 0;
+    const last = samples[samples.length - 1];
+    if (Date.now() - last[0] > RATE_WINDOW_MS * 2) return 0;
+    let first = samples[0];
+    for (const sample of samples) {
+      if (last[0] - sample[0] <= RATE_WINDOW_MS) break;
+      first = sample;
+    }
+    const elapsed = last[0] - first[0];
+    return elapsed > 0 ? Math.max(0, (last[1] - first[1]) * 1000 / elapsed) : 0;
+  }
+
+  function tickSpark() {
+    if (!current) return;
+    const rate = currentRate();
+    $('rate').textContent = Math.round(rate).toLocaleString('th-TH');
+    spark.push(rate);
+    if (spark.length > SPARK_POINTS) spark.shift();
+
+    const canvas = $('spark');
+    const ratio = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (canvas.width !== width * ratio) { canvas.width = width * ratio; canvas.height = height * ratio; }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const peak = Math.max(10, ...spark);
+    const step = width / (SPARK_POINTS - 1);
+    ctx.beginPath();
+    spark.forEach((value, i) => {
+      const x = (SPARK_POINTS - spark.length + i) * step;
+      const y = height - 6 - (value / peak) * (height - 12);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = '#ffb020';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#8e9bc0';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('สูงสุด ' + Math.round(peak).toLocaleString('th-TH') + ' บิด/วินาที', 8, 14);
+  }
+
+  // ----- bidding -----
+  async function placeBid(amountSatang) {
+    const bidder = myName();
+    if (!bidder || !current) return;
+    const key = newKey();
+    const send = () => api('POST', '/v1/auctions/' + encodeURIComponent(selectedId) + '/bids',
+      { bidder_id: bidder, amount_satang: amountSatang }, { 'Idempotency-Key': key });
+    let res;
+    try {
+      res = await send();
+      // 503 means accepted but not yet durable; the same key replays safely.
+      if (res.status === 503) res = await send();
+    } catch (_) {
+      toast('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้', 'bad');
+      return;
+    }
+    if (res.ok) {
+      toast('บิดสำเร็จ ' + baht(res.data.amount_satang) + (res.data.extended ? ' · ต่อเวลา +2 นาที' : ''), 'good');
+      return;
+    }
+    const error = res.data.error || {};
+    if (error.code === 'bid_too_low') {
+      toast('โดนแซงแล้ว ขั้นต่ำตอนนี้ ' + baht(error.min_required_satang), 'bad');
+    } else if (error.code === 'validation_failed') {
+      toast(ERROR_TEXT.validation_failed + ': ' + (error.message || ''), 'bad');
+    } else {
+      toast(ERROR_TEXT[error.code] || 'เกิดข้อผิดพลาด (' + res.status + ')', 'bad');
+    }
+  }
+
+  $('bidbar').addEventListener('click', (event) => {
+    const button = event.target.closest('button');
+    if (!button || !current) return;
+    // Computed at click time from the newest snapshot.
+    placeBid(current.min_next_bid_satang + Number(button.dataset.steps) * current.min_increment_satang);
+  });
+  $('bidCustom').addEventListener('click', () => {
+    const amount = parseBaht($('amount').value);
+    if (amount === null || amount <= 0) { toast('ใส่ราคาเป็นบาท ทศนิยมไม่เกิน 2 ตำแหน่ง', 'bad'); return; }
+    placeBid(amount);
+  });
+  $('amount').addEventListener('keydown', (event) => { if (event.key === 'Enter') $('bidCustom').click(); });
+
+  // ----- create auction -----
+  $('create').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const start = parseBaht(form.start.value);
+    const step = parseBaht(form.step.value);
+    if (start === null || step === null || start <= 0 || step <= 0) {
+      toast('ใส่ราคาเป็นบาท ทศนิยมไม่เกิน 2 ตำแหน่ง', 'bad');
+      return;
+    }
+    const now = Date.now();
+    let res;
+    try {
+      res = await api('POST', '/v1/auctions', {
+        title: form.title.value,
+        seller_id: HOUSE_SELLER,
+        start_price_satang: start,
+        min_increment_satang: step,
+        starts_at: new Date(now - 1000).toISOString(),
+        ends_at: new Date(now + Number(form.minutes.value) * 60000).toISOString(),
+      });
+    } catch (_) {
+      toast('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้', 'bad');
+      return;
+    }
+    if (!res.ok) {
+      toast('เปิดประมูลไม่สำเร็จ: ' + ((res.data.error || {}).message || res.status), 'bad');
+      return;
+    }
+    toast('เปิดประมูลแล้ว', 'good');
+    form.title.value = '';
+    select(res.data.auction_id);
+  });
+
+  // ----- boot -----
+  $('me').value = recall('bidarena.me');
+  $('me').addEventListener('change', () => remember('bidarena.me', $('me').value.trim()));
+  setInterval(tickClock, 100);
+  setInterval(tickSpark, SPARK_TICK_MS);
+  setInterval(loadLots, LIST_REFRESH_MS);
+  loadLots();
+  const fromHash = decodeURIComponent(location.hash.slice(1));
+  if (ID_PATTERN.test(fromHash)) select(fromHash);
+})();
+</script>
+</body>
+</html>

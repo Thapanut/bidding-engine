@@ -56,6 +56,7 @@ func Run(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"AC08_ReplaysAcceptedBidIdempotently", replaysIdempotently},
 		{"AC08_RejectsIdempotencyKeyReuse", rejectsKeyReuse},
 		{"AC09_OpenAuctionNeverResetsLiveState", openIsIdempotent},
+		{"AC22_RecentBidsAreNewestFirstAndCapped", recentBids},
 		{"AC10_ConcurrentBiddersKeepInvariants", concurrentBidders},
 	}
 	for _, tc := range cases {
@@ -241,6 +242,38 @@ func openIsIdempotent(t *testing.T, h Harness) {
 	}
 	if got := mustGet(t, h, auction.ID); got.BidSequence != 1 || got.HighestBidderID != "bidder-1" {
 		t.Fatalf("re-open reset live state: %+v", got)
+	}
+}
+
+func recentBids(t *testing.T, h Harness) {
+	ctx := context.Background()
+	if bids, err := h.Store.RecentBids(ctx, uuid.NewString()); err != nil || len(bids) != 0 {
+		t.Fatalf("unknown auction: bids = %v, err = %v, want an empty list", bids, err)
+	}
+
+	auction := openAuction(t, h, -time.Hour, time.Hour)
+	const placed = domain.RecentBidsKept + 5
+	var last domain.Bid
+	for i := range placed {
+		bidder := "bidder-" + string(rune('a'+i%2))
+		last = mustPlace(t, h, attempt(t, auction.ID, bidder, startPrice+kernel.Money(i)*minIncrement))
+	}
+	wantErr(t, h, attempt(t, auction.ID, "bidder-z", startPrice), domain.ErrBidTooLow)
+
+	bids, err := h.Store.RecentBids(ctx, auction.ID)
+	if err != nil {
+		t.Fatalf("recent bids: %v", err)
+	}
+	if len(bids) != domain.RecentBidsKept {
+		t.Fatalf("kept %d bids, want the cap %d", len(bids), domain.RecentBidsKept)
+	}
+	if bids[0] != last {
+		t.Fatalf("newest = %+v, want the last accepted bid %+v", bids[0], last)
+	}
+	for i, bid := range bids {
+		if want := int64(placed - i); bid.Sequence != want {
+			t.Fatalf("bids[%d].Sequence = %d, want %d (newest first)", i, bid.Sequence, want)
+		}
 	}
 }
 

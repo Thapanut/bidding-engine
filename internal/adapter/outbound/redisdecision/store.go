@@ -35,6 +35,7 @@ const (
 // Auction hash fields.
 const (
 	fieldSellerID      = "seller_id"
+	fieldTitle         = "title"
 	fieldStartPrice    = "start_price"
 	fieldMinIncrement  = "min_increment"
 	fieldCurrentPrice  = "current_price"
@@ -77,6 +78,7 @@ func NewStore(client redis.UniversalClient, retention time.Duration) *Store {
 // The {id} hash tag keeps both keys of an auction in one Redis Cluster slot.
 func auctionKey(auctionID string) string { return "auction:{" + auctionID + "}" }
 func bidsKey(auctionID string) string    { return "auction:{" + auctionID + "}:bids" }
+func recentKey(auctionID string) string  { return "auction:{" + auctionID + "}:recent" }
 
 // OpenAuction implements port.DecisionStore.
 func (s *Store) OpenAuction(ctx context.Context, auction domain.Auction) error {
@@ -88,6 +90,7 @@ func (s *Store) OpenAuction(ctx context.Context, auction domain.Auction) error {
 		auction.StartsAt.UnixMilli(),
 		auction.EndsAt.UnixMilli(),
 		expireAt.UnixMilli(),
+		auction.Title,
 	).Err()
 	if err != nil {
 		return fmt.Errorf("redis open auction %s: %w", auction.ID, err)
@@ -98,13 +101,14 @@ func (s *Store) OpenAuction(ctx context.Context, auction domain.Auction) error {
 // PlaceBid implements port.DecisionStore.
 func (s *Store) PlaceBid(ctx context.Context, attempt domain.BidAttempt) (domain.Bid, error) {
 	reply, err := placeBidScript.Run(ctx, s.client,
-		[]string{auctionKey(attempt.AuctionID), bidsKey(attempt.AuctionID)},
+		[]string{auctionKey(attempt.AuctionID), bidsKey(attempt.AuctionID), recentKey(attempt.AuctionID)},
 		attempt.BidID,
 		attempt.BidderID,
 		int64(attempt.Amount),
 		domain.AntiSnipingWindow.Milliseconds(),
 		domain.AntiSnipingExtension.Milliseconds(),
 		s.retention.Milliseconds(),
+		domain.RecentBidsKept,
 	).StringSlice()
 	if err != nil {
 		return domain.Bid{}, fmt.Errorf("redis place bid on %s: %w", attempt.AuctionID, err)
@@ -166,6 +170,7 @@ func (s *Store) GetAuction(ctx context.Context, auctionID string) (domain.Auctio
 	}
 	auction := domain.Auction{
 		ID:              auctionID,
+		Title:           fields[fieldTitle],
 		SellerID:        fields[fieldSellerID],
 		StartPrice:      kernel.Money(number(fieldStartPrice)),
 		MinIncrement:    kernel.Money(number(fieldMinIncrement)),
@@ -179,6 +184,28 @@ func (s *Store) GetAuction(ctx context.Context, auctionID string) (domain.Auctio
 		return domain.Auction{}, parseErr
 	}
 	return auction, nil
+}
+
+// RecentBids implements port.DecisionStore.
+func (s *Store) RecentBids(ctx context.Context, auctionID string) ([]domain.Bid, error) {
+	entries, err := s.client.LRange(ctx, recentKey(auctionID), 0, domain.RecentBidsKept-1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis recent bids of %s: %w", auctionID, err)
+	}
+	bids := make([]domain.Bid, 0, len(entries))
+	for _, entry := range entries {
+		// Each entry is "bid_id|record".
+		bidID, record, found := strings.Cut(entry, recordSeparator)
+		if !found {
+			return nil, fmt.Errorf("redis recent bids of %s: malformed entry %q", auctionID, entry)
+		}
+		bid, err := parseRecord(bidID, auctionID, record)
+		if err != nil {
+			return nil, err
+		}
+		bids = append(bids, bid)
+	}
+	return bids, nil
 }
 
 // parseRecord decodes "seq|bidder_id|amount|placed_at_ms|ends_at_ms|extended".

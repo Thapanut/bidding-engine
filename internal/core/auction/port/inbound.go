@@ -13,6 +13,7 @@ import (
 // CreateAuctionCommand opens a new auction. AuctionID is optional.
 type CreateAuctionCommand struct {
 	AuctionID    string
+	Title        string
 	SellerID     string
 	StartPrice   kernel.Money
 	MinIncrement kernel.Money
@@ -39,6 +40,12 @@ type Bidding interface {
 	CreateAuction(ctx context.Context, cmd CreateAuctionCommand) (AuctionView, error)
 	PlaceBid(ctx context.Context, cmd PlaceBidCommand) (domain.Bid, error)
 	GetAuction(ctx context.Context, auctionID string) (AuctionView, error)
+	// ListAuctions returns the most recently created auctions with live state.
+	ListAuctions(ctx context.Context) ([]AuctionView, error)
+	// ListBids returns the most recent accepted bids of an auction, newest
+	// first: live from the decision layer, or from the audit trail once the
+	// live state has expired.
+	ListBids(ctx context.Context, auctionID string) ([]domain.Bid, error)
 }
 
 // BidRecorder is the asynchronous use case driven by the bid-placed consumer.

@@ -178,3 +178,41 @@ func TestAC20_ConcurrentRedeliveryConvergesOnPostgres(t *testing.T) {
 		t.Fatalf("auction = %+v, want the state after %+v", got, last)
 	}
 }
+
+func TestAC20_TitleListAuctionsAndListBids(t *testing.T) {
+	repo, _ := setup(t)
+	ctx := context.Background()
+	now := time.Now()
+	titled, err := domain.NewAuction(uuid.NewString(), "seller-1", 10_000, 500, now.Add(-time.Hour), now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if titled, err = titled.WithTitle("Toyota Hilux Revo 2.4 ปี 2021"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateAuction(ctx, titled); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.GetAuction(ctx, titled.ID); err != nil || got != titled {
+		t.Fatalf("got %+v (%v), want %+v", got, err, titled)
+	}
+
+	listed, err := repo.ListAuctions(ctx, 1)
+	if err != nil || len(listed) != 1 || listed[0] != titled {
+		t.Fatalf("list = %+v (%v), want only the newest auction %+v", listed, err, titled)
+	}
+
+	first, second, third := bidAt(titled, 1), bidAt(titled, 2), bidAt(titled, 3)
+	for _, bid := range []domain.Bid{second, first, third} {
+		if err := repo.ApplyBid(ctx, bid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bids, err := repo.ListBids(ctx, titled.ID, 2)
+	if err != nil || len(bids) != 2 || bids[0] != third || bids[1] != second {
+		t.Fatalf("bids = %+v (%v), want the two highest sequences, newest first", bids, err)
+	}
+	if none, err := repo.ListBids(ctx, uuid.NewString(), 10); err != nil || len(none) != 0 {
+		t.Fatalf("unknown auction bids = %+v (%v), want none", none, err)
+	}
+}

@@ -64,9 +64,19 @@ Evaluated in this order, atomically per auction:
 |---|---|---|
 | `auction:{<id>}` | hash | seller, prices, highest bidder, sequence, start and end in ms |
 | `auction:{<id>}:bids` | hash | bid ID to accepted-bid record; the idempotency ledger |
+| `auction:{<id>}:recent` | list | latest 50 accepted bids, newest first, for live views |
 
-Both expire 24 hours after the auction's current end. The `{<id>}` hash tag
+All three expire 24 hours after the auction's current end. The `{<id>}` hash tag
 keeps them in one Redis Cluster slot.
+
+## Live view
+
+`GET /v1/auctions/{id}/events` is a server-sent-event stream. A hub in the HTTP
+adapter samples each watched auction every 100 ms through the inbound port
+(one live-state read and one recent-bids read, however many viewers) and
+pushes a snapshot when it changes, or every second as a heartbeat. Slow
+viewers skip to the newest snapshot instead of queueing. The demo page at `/`
+is embedded in the binary.
 
 ## Runtime
 

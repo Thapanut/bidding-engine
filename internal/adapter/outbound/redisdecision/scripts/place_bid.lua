@@ -3,14 +3,16 @@
 --
 -- KEYS[1] auction hash
 -- KEYS[2] accepted-bids hash (bid_id -> record), the idempotency ledger
+-- KEYS[3] recent-bids list ("bid_id|record", newest first, capped) for live views
 -- ARGV[1] bid_id         ARGV[2] bidder_id        ARGV[3] amount (satang)
 -- ARGV[4] anti-sniping window ms   ARGV[5] extension ms   ARGV[6] retention ms
+-- ARGV[7] recent bids kept
 --
 -- Reply: { code } or { code, payload }
 --   ACCEPTED / DUPLICATE -> payload is the bid record
 --       seq|bidder_id|amount|placed_at_ms|ends_at_ms|extended
 --   TOO_LOW              -> payload is the minimum acceptable amount
-local auction_key, bids_key = KEYS[1], KEYS[2]
+local auction_key, bids_key, recent_key = KEYS[1], KEYS[2], KEYS[3]
 local bid_id, bidder_id, amount_arg = ARGV[1], ARGV[2], ARGV[3]
 local window_ms, extension_ms, retention_ms = tonumber(ARGV[4]), tonumber(ARGV[5]), tonumber(ARGV[6])
 
@@ -69,9 +71,12 @@ local record = table.concat({
   string.format('%.0f', now_ms), ends_str, tostring(extended),
 }, '|')
 redis.call('HSET', bids_key, bid_id, record)
+redis.call('LPUSH', recent_key, bid_id .. '|' .. record)
+redis.call('LTRIM', recent_key, 0, tonumber(ARGV[7]) - 1)
 
 local expire_at = string.format('%.0f', ends_ms + retention_ms)
 redis.call('PEXPIREAT', auction_key, expire_at)
 redis.call('PEXPIREAT', bids_key, expire_at)
+redis.call('PEXPIREAT', recent_key, expire_at)
 
 return { 'ACCEPTED', record }

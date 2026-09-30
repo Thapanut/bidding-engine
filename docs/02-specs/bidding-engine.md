@@ -1,7 +1,8 @@
 # Spec: Bidding Engine v1
 
-Scope: place bids on timed auctions and report auction status. Out of scope:
-authentication, auction closing and winner settlement, bid history queries.
+Scope: place bids on timed auctions, report auction status, list auctions and
+recent bids, stream live auction state, and a demo bidding page. Out of scope:
+authentication, auction closing and winner settlement, full bid history paging.
 
 Contracts: [openapi.yaml](../../contracts/openapi.yaml),
 [asyncapi.yaml](../../contracts/asyncapi.yaml).
@@ -33,6 +34,12 @@ subtests of the decision-store contract).
 | AC18 | A transient persistence failure is retried, not dropped |
 | AC19 | 2,000 concurrent bidders through the HTTP API: live state, decision ledger and durable audit agree |
 | AC20 | PostgreSQL repository: round trip, idempotent and order-tolerant apply, rollback on conflict, 2,000 concurrent redeliveries converge (`-tags=integration`) |
+| AC21 | 5,000 concurrent bidders over HTTP on real Redis, Kafka and PostgreSQL: gapless sequences, and the Redis ledger, the `bids` audit and the `auctions` row all match (`-tags=integration`, `make test-concurrency`) |
+| AC22 | The decision store keeps the latest 50 accepted bids per auction, newest first |
+| AC23 | Auctions list newest first with live state overlaid; recent bids come from the live feed, or from the audit trail once live state has expired |
+| AC24 | `GET /v1/auctions` and `GET /v1/auctions/{id}/bids` return the contract shapes; an auction may carry an optional title of up to 120 characters |
+| AC25 | `GET /` serves the Bid Arena page |
+| AC26 | `GET /v1/auctions/{id}/events` streams a snapshot on connect, on every change (at most every 100 ms) and at least every second; unknown auctions get `404`; shutdown ends open streams |
 
 ## Non-functional
 
